@@ -10,7 +10,6 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <style>
-        /* نفس الـ CSS الموجود بالكامل بدون تغيير */
         :root {
             --bg-primary: #0a0a14;
             --bg-secondary: #111122;
@@ -83,6 +82,10 @@
         .date-card { background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:14px; cursor:pointer; transition:0.3s; display:flex; justify-content:space-between; align-items:center; }
         .date-card:hover { border-color:#d4a853; }
         .date-card.active-date { border-color:#d4a853; background:rgba(212,168,83,0.1); }
+        /* إضافة بسيطة لزر التأكيد داخل حقل الباركود */
+        .barcode-wrapper { position:relative; width:100%; margin-top:10px; }
+        .barcode-wrapper input { width:100%; padding:14px 48px 14px 14px; font-size:16px; text-align:center; border:3px dashed #b8942e; background:#0d0d1a; color:#fff; border-radius:14px; font-family:'Cairo'; outline:none; }
+        .barcode-wrapper .confirm-btn { position:absolute; left:6px; top:50%; transform:translateY(-50%); background:linear-gradient(135deg,#b8942e,#d4a853); color:#1a1a10; border:none; border-radius:50%; width:34px; height:34px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px; }
         @media (max-width:768px) {
             .sidebar { width:var(--sidebar-width-mobile); }
             .sidebar-logo { padding:16px 8px; }
@@ -154,7 +157,10 @@
         <section class="page-section" id="page-pos">
             <div class="form-card">
                 <div class="form-row"><div class="form-group"><label>👤 اسم العميل</label><input type="text" id="posCustomerName" placeholder="أدخل اسم العميل"></div><div class="form-group"><label>📱 رقم الهاتف</label><input type="text" id="posCustomerPhone" placeholder="01xxxxxxxx"></div></div>
-                <input type="text" id="posBarcodeInput" placeholder="امسح الباركود هنا..." style="width:100%;padding:14px;font-size:16px;text-align:center;border:3px dashed #b8942e;background:#0d0d1a;color:#fff;border-radius:14px;margin-top:10px;">
+                <div class="barcode-wrapper">
+                    <input type="text" id="posBarcodeInput" placeholder="امسح الباركود هنا...">
+                    <button class="confirm-btn" onclick="confirmBarcodeAdd()">✔️</button>
+                </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 380px;gap:16px;" class="pos-layout">
                 <div><div class="form-card"><select id="posManualSelect" style="width:100%;padding:10px;background:#0d0d1a;color:#fff;border:1px solid #1e1e32;border-radius:8px;" onchange="addFromSelect()"><option value="">اختر قطعة</option></select></div></div>
@@ -204,7 +210,7 @@
             let currentPage = 'dashboard',
                 posCart = [],
                 pendingVariants = [],
-                currentReturnSale = null; // متغير لتخزين الفاتورة الحالية للمرتجع
+                currentReturnSale = null;
             const SIZE_OPTIONS = ['S', 'M', 'L', 'XL', 'XXL', 'مقاس واحد'];
 
             function formatCurrency(a) { return (parseFloat(a) || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ج.م'; }
@@ -232,67 +238,34 @@
             async function addToPOSCart(barcode) { const products = await getCollection('products'); for (const p of products) { if (p.variants) { const v = p.variants.find(v => v.barcode === barcode); if (v && parseInt(v.quantity) > 0) { const existing = posCart.find(i => i.barcode === barcode); if (existing) { if (existing.quantity >= parseInt(v.quantity)) return showToast('الكمية غير كافية', 'error'); existing.quantity++; } else posCart.push({ barcode, name: p.name, size: v.size, sellingPrice: p.sellingPrice, purchasePrice: p.purchasePrice, quantity: 1, productId: p.id, variantIndex: p.variants.indexOf(v), maxQuantity: parseInt(v.quantity) }); updatePOSCart(); return showToast(`تمت الإضافة: ${p.name}`); } } } showToast('القطعة غير موجودة', 'error'); }
             function updatePOSCart() { const container = document.getElementById('posCartItems'), discount = parseFloat(document.getElementById('posDiscount')?.value) || 0; if (posCart.length === 0) { container.innerHTML = '<p style="color:#7a7770;text-align:center;padding:16px;">الفارغة فارغة</p>'; document.getElementById('posTotal').textContent = 'الإجمالي: 0.00 ج.م'; return; } let subtotal = 0; container.innerHTML = posCart.map((item, i) => { const line = item.sellingPrice * item.quantity; subtotal += line; return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e1e32;font-size:12px;"><span>${item.name} (${item.size}) x${item.quantity}</span><span>${formatCurrency(line)} <button class="btn btn-xs btn-danger" onclick="window.posCart.splice(${i},1);window.updatePOSCart();">✕</button></span></div>`; }).join(''); const total = subtotal - (subtotal * discount / 100); document.getElementById('posTotal').textContent = `الإجمالي: ${formatCurrency(total)}`; }
             async function confirmSale() { if (posCart.length === 0) return showToast('الفارغة فارغة', 'error'); const customerName = document.getElementById('posCustomerName')?.value.trim() || 'عميل'; let phone = document.getElementById('posCustomerPhone')?.value.trim() || ''; if (phone && phone.startsWith('01')) phone = '20' + phone.substring(1); const discount = parseFloat(document.getElementById('posDiscount')?.value) || 0; let subtotal = 0, totalCOGS = 0; const itemsWithDiscount = posCart.map(item => { const effectivePrice = item.sellingPrice * (1 - discount / 100); subtotal += item.sellingPrice * item.quantity; totalCOGS += item.purchasePrice * item.quantity; return { ...item, effectivePrice }; }); const totalAmount = subtotal - (subtotal * discount / 100), invoiceNumber = 'INV-' + Date.now().toString(36); await addDocument('sales', { invoiceNumber, customerName, customerPhone: phone, items: itemsWithDiscount, subtotal, discount, totalAmount, totalCOGS }); for (const item of posCart) { const products = await getCollection('products'); const prod = products.find(p => p.id === item.productId); if (prod && prod.variants) { prod.variants[item.variantIndex].quantity = Math.max(0, parseInt(prod.variants[item.variantIndex].quantity) - item.quantity); await updateDocument('products', prod.id, { variants: prod.variants }); } } posCart = []; document.getElementById('posDiscount').value = '0'; updatePOSCart(); updatePOSManualSelect(); refreshDashboard(); loadInventoryTable(); if (phone) { let msg = `🌟 *Welcome to BRAND ESSA*\n👤 *العميل:* ${customerName}\n🧾 *رقم الفاتورة:* ${invoiceNumber}\n📅 *التاريخ:* ${new Date().toLocaleDateString('ar-EG')}\n\n🛍️ *المنتجات:*\n`; itemsWithDiscount.forEach(item => { msg += `- ${item.name} (${item.size}) x${item.quantity}  |  ${formatCurrency(item.effectivePrice*item.quantity)}\n`; }); if (discount > 0) msg += `\n🔥 *الخصم:* ${discount}%`; msg += `\n\n💵 *الإجمالي النهائي:* ${formatCurrency(totalAmount)}`; msg += `\n\n🤝 شرفتونا ونورتونا! نتمنى لكم يوماً سعيداً.\n✨ Thank you for visiting BRAND ESSA!`; window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank'); } showToast(`تم البيع! الفاتورة: ${invoiceNumber} ${phone?'| تم فتح واتساب':''}`); }
-            document.getElementById('posBarcodeInput')?.addEventListener('keydown', function(e) { if (e.key === 'Enter') { addToPOSCart(this.value.trim()); this.value = ''; } });
+            function confirmBarcodeAdd() { const barcode = document.getElementById('posBarcodeInput').value.trim(); if (barcode) { addToPOSCart(barcode); document.getElementById('posBarcodeInput').value = ''; } }
+            document.getElementById('posBarcodeInput')?.addEventListener('keydown', function(e) { if (e.key === 'Enter') { confirmBarcodeAdd(); } });
 
-            // دوال المرتجعات المعدلة
             function renderReturnInvoice(sale) {
                 const container = document.getElementById('returnResult');
-                if (!sale || sale.items.length === 0) {
-                    container.innerHTML = '';
-                    return;
-                }
+                if (!sale || sale.items.length === 0) { container.innerHTML = ''; return; }
                 container.innerHTML = `<div style="background:#0d0d1a;padding:12px;border-radius:14px;" id="activeReturnInvoice"><strong>فاتورة #${sale.invoiceNumber}</strong> | ${formatCurrency(sale.totalAmount)}<table style="width:100%;margin-top:8px;font-size:11px;" id="returnItemsTable"><tbody>${sale.items.map((item,idx)=>`<tr id="returnItem-${idx}"><td>${item.name}</td><td>${item.size}</td><td>${formatCurrency(item.effectivePrice||item.sellingPrice)}</td><td><button class="btn btn-xs btn-gold" onclick="window.processReturn('${sale.id}',${idx},'return')">🔄 مرتجع</button></td></tr>`).join('')}</tbody></table></div>`;
             }
 
-            async function searchForReturn() {
-                const query = document.getElementById('returnSearch')?.value.trim();
-                if (!query) return showToast('أدخل رقم الفاتورة أو الباركود', 'error');
-                const sales = await getCollection('sales');
-                const sale = sales.find(s => s.invoiceNumber === query || s.items?.some(i => i.barcode === query));
-                const container = document.getElementById('returnResult');
-                if (!sale) { container.innerHTML = '<p style="color:#e04848;">لم يتم العثور على فاتورة</p>'; currentReturnSale = null; return; }
-                currentReturnSale = sale;
-                renderReturnInvoice(sale);
-            }
+            async function searchForReturn() { const query = document.getElementById('returnSearch')?.value.trim(); if (!query) return showToast('أدخل رقم الفاتورة أو الباركود', 'error'); const sales = await getCollection('sales'); const sale = sales.find(s => s.invoiceNumber === query || s.items?.some(i => i.barcode === query)); const container = document.getElementById('returnResult'); if (!sale) { container.innerHTML = '<p style="color:#e04848;">لم يتم العثور على فاتورة</p>'; currentReturnSale = null; return; } currentReturnSale = sale; renderReturnInvoice(sale); }
 
             async function processReturn(saleId, itemIndex, type) {
-                if (!currentReturnSale || currentReturnSale.id !== saleId) {
-                    // إعادة تحميل الفاتورة إذا لم تكن مخزنة
-                    const sales = await getCollection('sales');
-                    currentReturnSale = sales.find(s => s.id === saleId);
-                }
+                if (!currentReturnSale || currentReturnSale.id !== saleId) { const sales = await getCollection('sales'); currentReturnSale = sales.find(s => s.id === saleId); }
                 const sale = currentReturnSale;
                 if (!sale || !sale.items[itemIndex]) return;
                 const item = sale.items[itemIndex];
                 const refundAmount = (item.effectivePrice || item.sellingPrice) * item.quantity;
                 await addDocument('returns', { saleId, invoiceNumber: sale.invoiceNumber, itemName: item.name, refundAmount, returnType: type, createdAt: new Date().toISOString() });
                 if (type === 'return') {
-                    // تحديث المخزون
                     const products = await getCollection('products');
                     const prod = products.find(p => p.id === item.productId);
-                    if (prod?.variants) {
-                        prod.variants[item.variantIndex].quantity += item.quantity;
-                        await updateDocument('products', prod.id, { variants: prod.variants });
-                    }
-                    // حذف العنصر من المصفوفة
+                    if (prod?.variants) { prod.variants[item.variantIndex].quantity += item.quantity; await updateDocument('products', prod.id, { variants: prod.variants }); }
                     sale.items.splice(itemIndex, 1);
-                    if (sale.items.length === 0) {
-                        await deleteDocument('sales', saleId);
-                        currentReturnSale = null;
-                        document.getElementById('returnResult').innerHTML = '';
-                    } else {
-                        const newTotal = sale.items.reduce((sum, i) => sum + ((i.effectivePrice || i.sellingPrice) * i.quantity), 0);
-                        await updateDocument('sales', saleId, { items: sale.items, totalAmount: newTotal });
-                        sale.totalAmount = newTotal;
-                        renderReturnInvoice(sale);
-                    }
+                    if (sale.items.length === 0) { await deleteDocument('sales', saleId); currentReturnSale = null; document.getElementById('returnResult').innerHTML = ''; }
+                    else { const newTotal = sale.items.reduce((sum, i) => sum + ((i.effectivePrice || i.sellingPrice) * i.quantity), 0); await updateDocument('sales', saleId, { items: sale.items, totalAmount: newTotal }); sale.totalAmount = newTotal; renderReturnInvoice(sale); }
                 }
-                showToast(`تم ${type==='return'?'المرتجع':'الاستبدال'}`);
-                refreshDashboard();
-                loadReturnsTable();
-                loadInventoryTable();
+                showToast(`تم ${type==='return'?'المرتجع':'الاستبدال'}`); refreshDashboard(); loadReturnsTable(); loadInventoryTable();
             }
-
             async function loadReturnsTable() { const returns = await getCollection('returns'); document.getElementById('returnsTable').innerHTML = returns.map(r => `<tr class="red-text"><td><button class="btn btn-xs btn-danger" onclick="window.deleteReturn('${r.id}')" title="حذف"><i class="fa-solid fa-trash"></i></button></td><td>${new Date(r.createdAt).toLocaleDateString('ar-EG')}</td><td>${r.invoiceNumber}</td><td>${r.itemName}</td><td>${r.returnType}</td><td>${formatCurrency(r.refundAmount)}</td></tr>`).join('') || '<tr><td colspan="6">لا توجد مرتجعات</td></tr>'; }
             async function deleteReturn(returnId) { if (confirm('حذف هذا المرتجع؟')) { await deleteDocument('returns', returnId); showToast('تم حذف المرتجع'); loadReturnsTable(); refreshDashboard(); } }
 
@@ -321,6 +294,7 @@
             window.addFromSelect = addFromSelect;
             window.updatePOSCart = updatePOSCart;
             window.confirmSale = confirmSale;
+            window.confirmBarcodeAdd = confirmBarcodeAdd;
             window.viewBarcode = viewBarcode;
             window.moveToTrash = moveToTrash;
             window.searchForReturn = searchForReturn;
