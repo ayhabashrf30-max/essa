@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <style>
+        /* نفس الـ CSS الموجود في الكود الأصلي دون تغيير */
         :root {
             --bg-primary: #0a0a14; --bg-secondary: #111122; --bg-card: #161630; --gold: #d4a853;
             --text-primary: #e8e6e0; --text-secondary: #b0ada5; --border: #1e1e32;
@@ -179,7 +180,6 @@
 
     <script>
         (function() {
-            // Firebase
             let db = null, firestoreReady = false;
             try {
                 firebase.initializeApp({ apiKey: "AIzaSyCQLMKqlQEcWS6sOuYv3sE2kSvsK42Ii4g", authDomain: "brand-essa.firebaseapp.com", projectId: "brand-essa", storageBucket: "brand-essa.firebasestorage.app", messagingSenderId: "1007280436248", appId: "1:1007280436248:web:50ed03541a1004823eff6d" });
@@ -205,7 +205,6 @@
             function navigateTo(page) { currentPage = page; document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active')); document.querySelector(`.nav-item[data-page="${page}"]`)?.classList.add('active'); document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active')); document.getElementById('page-' + page)?.classList.add('active'); if (page === 'pos') setTimeout(() => document.getElementById('posBarcodeInput')?.focus(), 300); if (page === 'dashboard') refreshDashboard(); if (page === 'inventory') loadInventoryTable(); if (page === 'returns') loadReturnsTable(); if (page === 'trash') loadTrashTable(); if (page === 'archive') loadArchivePage(); if (page === 'pos') updatePOSManualSelect(); }
             document.getElementById('sidebarNav')?.addEventListener('click', e => { const nav = e.target.closest('.nav-item'); if (nav) navigateTo(nav.dataset.page); });
 
-            // Purchases
             function getTotalPurchases() { const settings = localGet('settings'); const entry = settings.find(s => s.key === 'totalPurchases'); return entry ? parseFloat(entry.value) : 0; }
             function setTotalPurchases(value) { let settings = localGet('settings'); const idx = settings.findIndex(s => s.key === 'totalPurchases'); if (idx >= 0) settings[idx].value = value.toString(); else settings.push({ key: 'totalPurchases', value: value.toString() }); localSet('settings', settings); if (firestoreReady && db) { db.collection('settings').doc('store').set({ totalPurchases: value }, { merge: true }).catch(() => {}); } }
 
@@ -228,14 +227,81 @@
             function confirmBarcodeAdd() { const barcode = document.getElementById('posBarcodeInput').value.trim(); if (barcode) { addToPOSCart(barcode); document.getElementById('posBarcodeInput').value = ''; } }
             document.getElementById('posBarcodeInput')?.addEventListener('keydown', function(e) { if (e.key === 'Enter') { confirmBarcodeAdd(); } });
 
-            // Returns
-            async function searchForReturn() { const query = document.getElementById('returnSearch')?.value.trim(); if (!query) return showToast('أدخل رقم الفاتورة أو الباركود', 'error'); const sales = await getCollection('sales'); const sale = sales.find(s => s.invoiceNumber === query || s.items?.some(i => i.barcode === query)); const container = document.getElementById('returnResult'); if (!sale) { container.innerHTML = '<p style="color:#e04848;">لم يتم العثور على فاتورة</p>'; return; } renderReturnInvoice(sale); }
-            function renderReturnInvoice(sale) { const container = document.getElementById('returnResult'); container.innerHTML = `<div style="background:#0d0d1a;padding:12px;border-radius:14px;" id="activeReturnInvoice"><strong>فاتورة #${sale.invoiceNumber}</strong> | ${formatCurrency(sale.totalAmount)}<table style="width:100%;margin-top:8px;font-size:11px;" id="returnItemsTable"><tbody>${sale.items.map((item, idx) => `<tr id="returnItem-${idx}"><td>${item.name}</td><td>${item.size}</td><td>${formatCurrency(item.effectivePrice || item.sellingPrice)}</td><td><button class="btn btn-xs btn-gold" onclick="window.processReturn('${sale.id}',${idx},'return')">🔄 مرتجع</button></td></tr>`).join('')}</tbody></table></div>`; }
-            async function processReturn(saleId, itemIndex, type) { const sales = await getCollection('sales'); const sale = sales.find(s => s.id === saleId); if (!sale || !sale.items[itemIndex]) return; const item = sale.items[itemIndex]; const refundAmount = (item.effectivePrice || item.sellingPrice) * item.quantity; await addDocument('returns', { saleId, invoiceNumber: sale.invoiceNumber, itemName: item.name, refundAmount, returnType: type, createdAt: new Date().toISOString() }); if (type === 'return') { const products = await getCollection('products'); const prod = products.find(p => p.id === item.productId); if (prod?.variants) { prod.variants[item.variantIndex].quantity += item.quantity; await updateDocument('products', prod.id, { variants: prod.variants }); } sale.items.splice(itemIndex, 1); if (sale.items.length === 0) { await deleteDocument('sales', saleId); document.getElementById('returnResult').innerHTML = ''; } else { const newTotal = sale.items.reduce((sum, i) => sum + ((i.effectivePrice || i.sellingPrice) * i.quantity), 0); await updateDocument('sales', saleId, { items: sale.items, totalAmount: newTotal }); renderReturnInvoice(sale); } } showToast(`تم ${type === 'return' ? 'المرتجع' : 'الاستبدال'}`); refreshDashboard(); loadReturnsTable(); loadInventoryTable(); }
+            // Returns (improved)
+            async function searchForReturn() {
+                const query = document.getElementById('returnSearch')?.value.trim();
+                if (!query) return showToast('أدخل رقم الفاتورة أو الباركود', 'error');
+                const sales = await getCollection('sales');
+                const sale = sales.find(s => s.invoiceNumber === query || s.items?.some(i => i.barcode === query));
+                const container = document.getElementById('returnResult');
+                if (!sale) { container.innerHTML = '<p style="color:#e04848;">لم يتم العثور على فاتورة</p>'; return; }
+                // render invoice with unique IDs for each item
+                container.innerHTML = `<div style="background:#0d0d1a;padding:12px;border-radius:14px;" id="activeReturnInvoice">
+                    <strong>فاتورة #${sale.invoiceNumber}</strong> | ${formatCurrency(sale.totalAmount)}
+                    <table style="width:100%;margin-top:8px;font-size:11px;" id="returnItemsTable">
+                        <tbody>${sale.items.map((item, idx) => `
+                            <tr id="returnItem-${idx}">
+                                <td>${item.name}</td><td>${item.size}</td>
+                                <td>${formatCurrency(item.effectivePrice || item.sellingPrice)}</td>
+                                <td><button class="btn btn-xs btn-gold" onclick="window.processReturn('${sale.id}',${idx},'return')">🔄 مرتجع</button></td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                </div>`;
+            }
+
+            async function processReturn(saleId, itemIndex, type) {
+                const sales = await getCollection('sales');
+                const sale = sales.find(s => s.id === saleId);
+                if (!sale || !sale.items[itemIndex]) return;
+                const item = sale.items[itemIndex];
+                const refundAmount = (item.effectivePrice || item.sellingPrice) * item.quantity;
+                // سجل المرتجع
+                await addDocument('returns', { saleId, invoiceNumber: sale.invoiceNumber, itemName: item.name, refundAmount, returnType: type, createdAt: new Date().toISOString() });
+                if (type === 'return') {
+                    // أرجع القطعة للمخزون
+                    const products = await getCollection('products');
+                    const prod = products.find(p => p.id === item.productId);
+                    if (prod?.variants) {
+                        prod.variants[item.variantIndex].quantity += item.quantity;
+                        await updateDocument('products', prod.id, { variants: prod.variants });
+                    }
+                    // احذف العنصر من الفاتورة
+                    sale.items.splice(itemIndex, 1);
+                    if (sale.items.length === 0) {
+                        await deleteDocument('sales', saleId);
+                        document.getElementById('returnResult').innerHTML = '';
+                    } else {
+                        const newTotal = sale.items.reduce((sum, i) => sum + ((i.effectivePrice || i.sellingPrice) * i.quantity), 0);
+                        await updateDocument('sales', saleId, { items: sale.items, totalAmount: newTotal });
+                        // أعد عرض الفاتورة (لإخفاء العنصر المحذوف)
+                        const container = document.getElementById('returnResult');
+                        const activeDiv = document.getElementById('activeReturnInvoice');
+                        if (activeDiv) {
+                            // ببساطة نعيد بناء الـ HTML للفاتورة
+                            container.innerHTML = `<div style="background:#0d0d1a;padding:12px;border-radius:14px;" id="activeReturnInvoice">
+                                <strong>فاتورة #${sale.invoiceNumber}</strong> | ${formatCurrency(newTotal)}
+                                <table style="width:100%;margin-top:8px;font-size:11px;" id="returnItemsTable">
+                                    <tbody>${sale.items.map((it, idx) => `
+                                        <tr id="returnItem-${idx}">
+                                            <td>${it.name}</td><td>${it.size}</td>
+                                            <td>${formatCurrency(it.effectivePrice || it.sellingPrice)}</td>
+                                            <td><button class="btn btn-xs btn-gold" onclick="window.processReturn('${sale.id}',${idx},'return')">🔄 مرتجع</button></td>
+                                        </tr>`).join('')}</tbody>
+                                </table>
+                            </div>`;
+                        }
+                    }
+                }
+                showToast(`تم ${type === 'return' ? 'المرتجع' : 'الاستبدال'}`);
+                refreshDashboard();
+                loadReturnsTable();
+                loadInventoryTable();
+            }
+
             async function loadReturnsTable() { const returns = await getCollection('returns'); document.getElementById('returnsTable').innerHTML = returns.map(r => `<tr class="red-text"><td><button class="btn btn-xs btn-danger" onclick="window.deleteReturn('${r.id}')" title="حذف"><i class="fa-solid fa-trash"></i></button></td><td>${new Date(r.createdAt).toLocaleDateString('ar-EG')}</td><td>${r.invoiceNumber}</td><td>${r.itemName}</td><td>${r.returnType}</td><td>${formatCurrency(r.refundAmount)}</td></tr>`).join('') || '<tr><td colspan="6">لا توجد مرتجعات</td></tr>'; }
             async function deleteReturn(returnId) { if (confirm('حذف هذا المرتجع؟')) { await deleteDocument('returns', returnId); showToast('تم حذف المرتجع'); loadReturnsTable(); refreshDashboard(); } }
 
-            // Trash & Archive (kept unchanged)
+            // Trash & Archive (unchanged)
             async function loadTrashTable() { const trash = await getCollection('trash'); document.getElementById('trashTable').innerHTML = trash.map(t => `<tr><td>${new Date(t.deletedAt).toLocaleDateString('ar-EG')}</td><td>منتج</td><td>${t.data?.name||'---'}</td><td><button class="btn btn-xs btn-gold" onclick="window.restoreFromTrash('${t.id}')">استعادة</button></td><td><button class="btn btn-xs btn-danger" onclick="window.deletePermanently('${t.id}')">حذف نهائي</button></td></tr>`).join('') || '<tr><td colspan="5">سلة المحذوفات فارغة</td></tr>'; }
             async function restoreFromTrash(trashId) { const trash = await getCollection('trash'); const item = trash.find(t => t.id === trashId); if (!item) return; if (item.originalCollection === 'products') { const products = await getCollection('products'); let prod = products.find(p => p.id === item.originalId); if (prod) { if (!prod.variants) prod.variants = []; prod.variants.push(item.data.variants[0]); await updateDocument('products', prod.id, { variants: prod.variants }); } else { await addDocument('products', item.data); } } await deleteDocument('trash', trashId); showToast('تمت الاستعادة'); loadTrashTable(); refreshDashboard(); loadInventoryTable(); }
             async function deletePermanently(trashId) { if (confirm('حذف نهائي؟')) { await deleteDocument('trash', trashId); showToast('تم الحذف النهائي'); loadTrashTable(); } }
